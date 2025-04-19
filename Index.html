@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>3D Cone Racer</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; }
+
+    #hud {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: sans-serif;
+      font-size: 16px;
+      z-index: 5;
+      background: rgba(0,0,0,0.4);
+      padding: 10px 15px;
+      border-radius: 10px;
+      border: 1px solid white;
+    }
+
+    .controls {
+      position: absolute;
+      bottom: 20px;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      gap: 80px;
+      z-index: 2;
+    }
+
+    .btn {
+      background: rgba(255,255,255,0.2);
+      border: 2px solid white;
+      color: white;
+      padding: 15px 25px;
+      border-radius: 10px;
+      font-size: 26px;
+      user-select: none;
+    }
+
+    .btn:active {
+      background: rgba(255,255,255,0.4);
+    }
+
+    #goalText {
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: yellow;
+      font-family: sans-serif;
+      font-size: 22px;
+      z-index: 6;
+    }
+
+    #congratsScreen,
+    #gameOverScreen {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100vw;
+      height: 100vh;
+      background-color: rgba(0,0,0,0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      z-index: 10;
+      color: white;
+      font-family: sans-serif;
+    }
+
+    .congratsBox {
+      background: rgba(255,255,255,0.1);
+      padding: 30px;
+      border: 2px solid white;
+      border-radius: 15px;
+      text-align: center;
+      box-shadow: 0 0 20px rgba(255,255,255,0.3);
+    }
+
+    .congratsBox h2 {
+      margin-bottom: 20px;
+    }
+
+    .congratsBox button {
+      margin: 10px;
+      padding: 10px 20px;
+      font-size: 16px;
+      font-weight: bold;
+      border: none;
+      border-radius: 10px;
+      background: white;
+      color: black;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div id="hud">Speed: 0 | Coins: 0</div>
+<div id="goalText">Get 7 coins in 30 seconds!</div>
+
+<div class="controls">
+  <div class="btn" id="leftBtn">←</div>
+  <div class="btn" id="rightBtn">→</div>
+</div>
+
+<div id="congratsScreen">
+  <div class="congratsBox">
+    <h2>Congratulations! Level Completed</h2>
+    <button onclick="nextLevel()">Next Level</button>
+    <button onclick="restartGame()">Replay</button>
+    <button onclick="goHome()">Home</button>
+  </div>
+</div>
+
+<div id="gameOverScreen">
+  <div class="congratsBox">
+    <h2>Game Over!</h2>
+    <button onclick="restartGame()">Retry</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.158.0/three.min.js"></script>
+<script>
+let scene = new THREE.Scene();
+let camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+let renderer = new THREE.WebGLRenderer({ alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(0, 20, 10).normalize();
+scene.add(light);
+
+const roadGeometry = new THREE.PlaneGeometry(20, 200);
+const roadMaterial = new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide });
+const road = new THREE.Mesh(roadGeometry, roadMaterial);
+road.rotation.x = Math.PI / 2;
+road.position.y = -1;
+scene.add(road);
+
+const coneGeometry = new THREE.ConeGeometry(1, 2, 20);
+const coneMaterial = new THREE.MeshLambertMaterial({ color: 0xffa500 });
+const player = new THREE.Mesh(coneGeometry, coneMaterial);
+player.position.set(0, 0, 5);
+scene.add(player);
+
+camera.position.set(0, 3, 10);
+camera.lookAt(player.position);
+
+let obstacles = [];
+let coins = [];
+let moveDir = 0;
+let speed = 0.1;
+let score = 0;
+let animationId;
+let collectedCoins = 0;
+let timer = 30;
+let timerStarted = false;
+let goalAchieved = false;
+
+const leftBtn = document.getElementById('leftBtn');
+const rightBtn = document.getElementById('rightBtn');
+const goalText = document.getElementById('goalText');
+const hud = document.getElementById('hud');
+const congratsScreen = document.getElementById('congratsScreen');
+const gameOverScreen = document.getElementById('gameOverScreen');
+
+function setupButton(btn, dir) {
+  btn.addEventListener('mousedown', () => moveDir = dir);
+  btn.addEventListener('mouseup', () => moveDir = 0);
+  btn.addEventListener('mouseleave', () => moveDir = 0);
+  btn.addEventListener('touchstart', e => { e.preventDefault(); moveDir = dir; }, { passive: false });
+  btn.addEventListener('touchend', () => moveDir = 0);
+}
+
+setupButton(leftBtn, -1);
+setupButton(rightBtn, 1);
+
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft") moveDir = -1;
+  if (e.key === "ArrowRight") moveDir = 1;
+});
+document.addEventListener("keyup", () => moveDir = 0);
+
+function updatePlayerPosition() {
+  if (moveDir !== 0) {
+    player.position.x += moveDir * 0.2;
+    player.position.x = Math.max(Math.min(player.position.x, 8), -8);
+  }
+}
+
+function spawnObject(type) {
+  const lanes = [-6, -3, 0, 3, 6];
+  let available = lanes.filter(x => {
+    return ![...obstacles, ...coins].some(obj =>
+      Math.abs(obj.position.x - x) < 2 && Math.abs(obj.position.z + 30) < 2
+    );
+  });
+  if (available.length === 0) return;
+
+  const xPos = available[Math.floor(Math.random() * available.length)];
+  let obj;
+
+  if (type === 'coin') {
+    const textureLoader = new THREE.TextureLoader();
+    const texture = textureLoader.load("https://i.postimg.cc/KYWm5r6X/pngtree-game-coin-with-crown-png-image-5542704.png");
+    const coinMat = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
+    const coinGeo = new THREE.PlaneGeometry(2, 2);
+    obj = new THREE.Mesh(coinGeo, coinMat);
+    coins.push(obj);
+  } else {
+    const boxGeo = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+    const boxMat = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+    obj = new THREE.Mesh(boxGeo, boxMat);
+    obstacles.push(obj);
+  }
+
+  obj.position.set(xPos, 0, -30);
+  scene.add(obj);
+}
+
+function checkCollision(a, b) {
+  const dx = a.position.x - b.position.x;
+  const dz = a.position.z - b.position.z;
+  return Math.abs(dx) < 1.5 && Math.abs(dz) < 1.5;
+}
+
+function showGameOver() {
+  cancelAnimationFrame(animationId);
+  gameOverScreen.style.display = "flex";
+}
+
+function restartGame() {
+  // Reset everything
+  for (const obj of [...obstacles, ...coins]) scene.remove(obj);
+  obstacles = [];
+  coins = [];
+  collectedCoins = 0;
+  speed = 0.1;
+  goalAchieved = false;
+  timer = 30;
+  timerStarted = false;
+  player.position.set(0, 0, 5);
+  gameOverScreen.style.display = "none";
+  congratsScreen.style.display = "none";
+  animate();
+}
+
+function goHome() {
+  alert("Back to main menu");
+}
+
+function nextLevel() {
+  alert("Level 2 coming soon!");
+}
+
+function startTimer() {
+  timerStarted = true;
+  goalText.innerText = "Get 7 coins in 30 seconds!";
+  setTimeout(() => goalText.innerText = "", 3000);
+  const interval = setInterval(() => {
+    if (goalAchieved || timer <= 0) {
+      clearInterval(interval);
+      if (!goalAchieved) showGameOver();
+    } else {
+      timer--;
+    }
+  }, 1000);
+}
+
+function animate() {
+  animationId = requestAnimationFrame(animate);
+  updatePlayerPosition();
+
+  if (!timerStarted) startTimer();
+
+  if (Math.random() < 0.02) spawnObject('obstacle');
+  if (Math.random() < 0.02) spawnObject('coin');
+
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const o = obstacles[i];
+    o.position.z += speed;
+    if (checkCollision(player, o)) showGameOver();
+    if (o.position.z > 10) {
+      scene.remove(o);
+      obstacles.splice(i, 1);
+      speed += 0.005;
+    }
+  }
+
+  for (let i = coins.length - 1; i >= 0; i--) {
+    const c = coins[i];
+    c.position.z += speed;
+    c.rotation.y += 0.05;
+    if (checkCollision(player, c)) {
+      collectedCoins++;
+      scene.remove(c);
+      coins.splice(i, 1);
+      if (collectedCoins >= 7 && !goalAchieved) {
+        goalAchieved = true;
+        setTimeout(() => {
+          congratsScreen.style.display = "flex";
+        }, 500);
+      }
+    } else if (c.position.z > 10) {
+      scene.remove(c);
+      coins.splice(i, 1);
+    }
+  }
+
+  hud.innerText = `Speed: ${Math.floor(speed * 100)} | Coins: ${collectedCoins}`;
+  renderer.render(scene, camera);
+}
+
+animate();
+</script>
+</body>
+</html>
